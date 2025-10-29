@@ -1,0 +1,53 @@
+{
+  "name": "@iamqc/cc-session",
+  "version": "1.0.0",
+  "description": "Claude Code session management and packaging utilities",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "bun build src/index.ts --outdir=dist --target=node --splitting --format=esm && bun link && bunx tsc --emitDeclarationOnly --outDir dist",
+    "dev": "bun build --watch src/index.ts --outdir=dist --target=node --splitting --format=esm",
+    "start": "bun run dist/index.js",
+    "test": "bun run test-session/demo-session.ts",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "bun run build",
+    "publish:beta": "npm publish --access public --tag beta",
+    "publish:patch": "npm version patch && npm publish --access public",
+    "publish:minor": "npm version minor && npm publish --access public",
+    "publish:major": "npm version major && npm publish --access public"
+  },
+  "keywords": [
+    "claude-code",
+    "session",
+    "typescript",
+    "bun",
+    "ai",
+    "anthropic"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest",
+    "nanoid": "^5.0.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "bun-types": "latest"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}
