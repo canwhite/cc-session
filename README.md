@@ -27,7 +27,11 @@ npm install @iamqc/cc-session
 ### Basic Usage
 
 ```typescript
-import { Session, SessionManager, createClientWithPreset } from "@iamqc/cc-session";
+import {
+  Session,
+  SessionManager,
+  createClientWithPreset,
+} from "@iamqc/cc-session";
 
 // Create a client with development preset
 const client = createClientWithPreset("development");
@@ -48,7 +52,7 @@ console.log("Response:", result);
 ### Session Management
 
 ```typescript
-import { SessionManager } from "cc-session";
+import { SessionManager } from "@iamqc/cc-session";
 
 // Create a session manager
 const manager = new SessionManager(() => createClientWithPreset("production"));
