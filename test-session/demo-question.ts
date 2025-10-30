@@ -90,8 +90,12 @@ async function demoQuestionMode() {
   });
 
   // Simulate user question
-  const question =
-    "Please analyze this project code structure and explain the main modules";
+  const question = `Please analyze this project code structure and explain the main modules
+    返回json  
+    {
+      main_info:"这里给项目主体信息，200字"
+    }
+    `;
   console.log(`\nUser question: ${question}`);
 
   // Send message and handle response
