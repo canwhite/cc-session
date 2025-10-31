@@ -33,7 +33,7 @@ export class Session {
   public readonly _id: string;
   public messages: ChatMessage[] = [];
   private subscribers: Map<string, SessionSubscriberCallback> = new Map();
-  private queryPromise: Promise<void> | null = null;
+  private queryPromise: Promise<{ success: boolean; lastAssistantMessage?: any; usage?: any }> | null = null;
   private loadingPromise: Promise<void> | null = null;
   private cancellationToken: { cancelled: boolean } | null = null;
   private messageCount = 0;
@@ -245,7 +245,7 @@ export class Session {
   async send(
     prompt: string,
     attachments: AttachmentPayload[] | undefined
-  ): Promise<{ success: boolean; error?: string; messageCount?: number }> {
+  ): Promise<{ success: boolean; error?: string; messageCount?: number; lastAssistantMessage?: any; usage?: any }> {
     if (this.queryPromise) {
       // Queue is busy, wait for it
       await this.queryPromise;
@@ -310,9 +310,26 @@ export class Session {
             break;
           }
           console.log("Processing stream message:", message.type);
+
+          // Process the message and check if it's a final result
           this.processIncomingMessage(message);
+
+          // Check if this is the final result message
+          if (message.type === "result") {
+            console.log("Final result received");
+          }
         }
         console.log("Query stream completed");
+
+        // Return the final result
+        const assistantMessages = this.messages.filter(msg => msg.type === 'assistant');
+        const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null;
+
+        return {
+          success: true,
+          lastAssistantMessage,
+          usage: this.usageData
+        };
       } catch (error) {
         console.error(`Error in session ${this.claudeSessionId}:`, error);
         this.error = error instanceof Error ? error.message : String(error);
@@ -327,16 +344,23 @@ export class Session {
     })();
 
     try {
-      await this.queryPromise;
+      const queryResult = await this.queryPromise;
       this.lastModifiedTime = Date.now();
       return {
         success: true,
-        messageCount: this.messageCount
+        messageCount: this.messageCount,
+        lastAssistantMessage: queryResult?.lastAssistantMessage,
+        usage: queryResult?.usage
       };
     } catch (error) {
+      const assistantMessages = this.messages.filter(msg => msg.type === 'assistant');
+      const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null;
+
       return {
         success: false,
-        error: this.error
+        error: this.error,
+        lastAssistantMessage,
+        usage: this.usageData
       };
     }
   }

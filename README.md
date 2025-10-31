@@ -14,6 +14,21 @@ A powerful TypeScript library for session management and packaging utilities for
 
 ## Quick Start
 
+### Prerequisites
+
+Before using this library, you need to have Claude Code installed on your system:
+
+```bash
+# Install Claude Code globally
+npm install -g @anthropic-ai/claude-code
+
+# Or using Bun
+bun install -g @anthropic-ai/claude-code
+
+# Verify installation
+claude --version
+```
+
 ### Installation
 
 ```bash
@@ -22,6 +37,39 @@ bun add @iamqc/cc-session
 
 # Or using npm
 npm install @iamqc/cc-session
+```
+
+### Configuration
+
+This library requires the path to the Claude Code executable. You can configure it in several ways:
+
+#### Method 1: Environment Variable (Recommended)
+
+```bash
+# Add to your .env file
+echo "CLAUDE_CODE_PATH=$(which claude)" >> .env
+
+# Or set in your shell
+export CLAUDE_CODE_PATH="/path/to/claude"
+```
+
+#### Method 2: Explicit Path in Code
+
+```typescript
+const client = createClientWithPreset("development", {
+  pathToClaudeCodeExecutable: '/Users/zack/.bun/bin/claude'  // or your path
+});
+```
+
+#### Finding Your Claude Code Path
+
+```bash
+# Find where Claude Code is installed
+which claude
+# Example output: /Users/zack/.bun/bin/claude
+
+# Or if installed via npm
+npm list -g @anthropic-ai/claude-code
 ```
 
 ### Basic Usage
@@ -34,19 +82,26 @@ import {
 } from "@iamqc/cc-session";
 
 // Create a client with development preset
-const client = createClientWithPreset("development");
+const client = createClientWithPreset("development", {
+  pathToClaudeCodeExecutable: process.env.CLAUDE_CODE_PATH || '/Users/zack/.bun/bin/claude'
+});
 
 // Create a session
 const session = new Session(client);
 
-// Subscribe to session updates
+// Send a message and get the final result directly
+const result = await session.send("Hello, Claude!");
+console.log("Success:", result.success);
+
+if (result.success && result.lastAssistantMessage) {
+  console.log("AI Response:", result.lastAssistantMessage.content);
+  console.log("Usage:", result.usage);
+}
+
+// Optional: Subscribe to real-time updates for streaming experience
 session.subscribe((session, message) => {
   console.log("Session update:", message);
 });
-
-// Send a message
-const result = await session.send("Hello, Claude!");
-console.log("Response:", result);
 ```
 
 ### Session Management
@@ -62,7 +117,7 @@ const session1 = manager.createSession();
 const session2 = manager.createSession();
 
 // List all sessions
-const sessions = manager.listSessions();
+const sessions = manager.sessions;
 
 // Clean up empty sessions
 manager.cleanupEmptySessions();
@@ -82,10 +137,28 @@ const session = new Session(client: ClaudeAgentSDKClient);
 
 #### Methods
 
-- `send(message: string, options?: SendOptions): Promise<SendResult>` - Send a message to Claude
+- `send(message: string, attachments?: AttachmentPayload[]): Promise<SendResult>` - Send a message to Claude and get the final result
 - `cancel(): void` - Cancel the current operation
 - `subscribe(callback: SubscriptionCallback): () => void` - Subscribe to session updates
 - `unsubscribe(): void` - Unsubscribe from updates
+
+#### SendResult
+
+The `send()` method now returns the final AI response directly:
+
+```typescript
+{
+  success: boolean;              // Whether the request succeeded
+  error?: string;               // Error message if failed
+  messageCount?: number;        // Total number of messages in session
+  lastAssistantMessage?: any;   // The final AI response message
+  usage?: {                    // Usage statistics
+    totalTokens: number;
+    totalCost: number;
+    contextWindow: number;
+  };
+}
+```
 
 #### Events
 
@@ -108,8 +181,8 @@ const manager = new SessionManager(clientFactory: ClientFactory);
 
 - `createSession(): Session` - Create a new session
 - `getSession(id: string): Session | null` - Get a session by ID
-- `listSessions(): Session[]` - List all sessions
-- `cleanupEmptySessions(): void` - Clean up empty sessions
+- `sessions: Session[]` - Get all sessions (property, not method)
+- `sessionsByLastModified: Session[]` - Get sessions sorted by last modification time
 
 ### Client Presets
 
@@ -205,8 +278,11 @@ session.subscribe((session, message) => {
   }
 });
 
-// Send a message
-await session.send("Create a simple TODO app");
+// Send a message and get the result directly
+const result = await session.send("Create a simple TODO app");
+if (result.success && result.lastAssistantMessage) {
+  console.log("AI Response:", result.lastAssistantMessage.content);
+}
 ```
 
 ### Multi-session Management
@@ -220,9 +296,17 @@ const manager = new SessionManager(() => createClientWithPreset("production"));
 const codingSession = manager.createSession();
 const designSession = manager.createSession();
 
-// Use sessions independently
-await codingSession.send("Help me debug this function");
-await designSession.send("Design a user interface for this app");
+// Use sessions independently and get results directly
+const codingResult = await codingSession.send("Help me debug this function");
+const designResult = await designSession.send("Design a user interface for this app");
+
+if (codingResult.success) {
+  console.log("Coding Help:", codingResult.lastAssistantMessage.content);
+}
+
+if (designResult.success) {
+  console.log("Design Suggestion:", designResult.lastAssistantMessage.content);
+}
 ```
 
 ### Read-Only Question Answering
