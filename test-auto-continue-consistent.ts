@@ -9,7 +9,10 @@ async function testConsistentAPI() {
 
   // Test 1: Create auto-continue manager with small maxTurns
   console.log("1️⃣ Creating auto-continue manager (maxTurns: 5)...");
-  const manager = createAutoContinueManager("development_continue", { maxTurns: 5 });
+  const manager = createAutoContinueManager("development_continue", {
+    maxTurns: 5,
+    pathToClaudeCodeExecutable: process.env.CLAUDE_CODE_PATH || '/Users/zack/.bun/bin/claude'
+  });
 
   // Create session - SAME API as SessionManager!
   const session = manager.createSession();
@@ -20,7 +23,7 @@ async function testConsistentAPI() {
 
   // Simulate adding messages to the session
   for (let i = 0; i < 4; i++) {
-    // Add mock messages to simulate approaching the limit
+    // Add mock messages to simulate appniroaching the limit
     session.messages.push({
       id: `msg-${i}`,
       type: 'user',
