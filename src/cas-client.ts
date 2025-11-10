@@ -154,6 +154,13 @@ export class ClaudeAgentSDKClient implements IClaudeAgentSDKClient {
     }
   }
 
+  /**
+   * Get the default options including systemPrompt
+   */
+  getDefaultOptions(): SDKOptions {
+    return { ...this.defaultOptions };
+  }
+
   async getSession(sessionId: string | undefined): Promise<{ messages: SDKMessage[] }> {
     if (!sessionId) {
       return { messages: [] };

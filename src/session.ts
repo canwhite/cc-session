@@ -295,14 +295,23 @@ export class Session {
     this.queryPromise = (async () => {
       try {
         // Use resume for multi-turn, continue for first message
-        const options = this.claudeSessionId
+        const baseOptions = this.claudeSessionId
           ? { resume: this.claudeSessionId }
           : {};
+
+        // Get client default options including systemPrompt
+        const clientDefaults = this.client.getDefaultOptions();
+
+        // Merge options: systemPrompt from client defaults + resume/session options
+        const queryOptions = {
+          ...clientDefaults,
+          ...baseOptions
+        };
 
         console.log("Starting query stream...");
         for await (const message of this.client.queryStream(
           generateMessages(),
-          options
+          queryOptions
         )) {
           // Check if operation was cancelled
           if (this.cancellationToken?.cancelled) {

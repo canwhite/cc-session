@@ -10,7 +10,7 @@ export type {
 } from "./types";
 export { SessionManager, type SessionCreationOptions } from "./session-manager";
 export { createClient, createClientWithPreset, DEFAULT_PRESETS } from "./cas-client";
-export { AutoContinueSessionManager, AutoContinueSession, EXTENDED_PRESETS, createAutoContinueManager, createAutoContinueManagerWithOptions } from "./auto-continue";
+export { AutoContinueSessionManager, AutoContinueSession, EXTENDED_PRESETS, createAutoContinueManager } from "./auto-continue";
 
 export type {
   APIAssistantContentBlock,

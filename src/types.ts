@@ -113,6 +113,8 @@ export interface IClaudeAgentSDKClient {
   getSession(
     sessionId: string | undefined
   ): Promise<{ messages: SDKMessage[] }>;
+
+  getDefaultOptions(): SDKOptions;
 }
 
 // Broadcast message types

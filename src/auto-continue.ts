@@ -178,38 +178,70 @@ export class AutoContinueSessionManager extends SessionManager {
 }
 
 /**
- * Create a SessionManager with auto-continue support using preset
+ * Create a SessionManager with auto-continue support
+ *
+ * @param preset - Either an extended preset (with _continue suffix) or a base preset
+ * @param options - Configuration options
  */
 export function createAutoContinueManager(
-  preset: keyof typeof EXTENDED_PRESETS,
-  options?: { maxTurns?: number; pathToClaudeCodeExecutable?: string }
+  preset: keyof typeof EXTENDED_PRESETS | keyof typeof DEFAULT_PRESETS,
+  options?: {
+    maxTurns?: number;
+    pathToClaudeCodeExecutable?: string;
+    systemPrompt?: string;
+    continue?: boolean; // Only used for base presets
+  }
 ): AutoContinueSessionManager {
-  const presetConfig = EXTENDED_PRESETS[preset];
+  // Check if it's an extended preset (has _continue suffix)
+  const isExtendedPreset = typeof preset === 'string' && preset.endsWith('_continue');
 
-  // Create client with the preset (extract base preset without _continue suffix)
-  const basePreset = preset.replace('_continue', '') as keyof typeof DEFAULT_PRESETS;
-  const client = createClientWithPreset(basePreset, {
-    pathToClaudeCodeExecutable: options?.pathToClaudeCodeExecutable
-  });
+  if (isExtendedPreset) {
+    // Handle extended preset
+    const extendedPreset = preset as keyof typeof EXTENDED_PRESETS;
+    const presetConfig = EXTENDED_PRESETS[extendedPreset];
+    const basePreset = extendedPreset.replace('_continue', '') as keyof typeof DEFAULT_PRESETS;
 
-  // Create auto-continue manager
-  return new AutoContinueSessionManager(client, {
-    continue: presetConfig.continue ?? false,
-    maxTurns: options?.maxTurns ?? presetConfig.maxTurns
-  });
+    // Prepare client options, with proper systemPrompt priority:
+    // 1. User-provided systemPrompt (highest priority)
+    // 2. Extended preset systemPrompt (if available)
+    // 3. Default preset systemPrompt (handled by createClientWithPreset)
+    const clientOptions: any = {
+      pathToClaudeCodeExecutable: options?.pathToClaudeCodeExecutable
+    };
+
+    // Only add systemPrompt if explicitly provided by user or in extended preset
+    if (options?.systemPrompt !== undefined) {
+      clientOptions.systemPrompt = options.systemPrompt;
+    } else if ('systemPrompt' in presetConfig && presetConfig.systemPrompt !== undefined) {
+      clientOptions.systemPrompt = presetConfig.systemPrompt;
+    }
+
+    const client = createClientWithPreset(basePreset, clientOptions);
+
+    // Create auto-continue manager
+    return new AutoContinueSessionManager(client, {
+      continue: presetConfig.continue ?? true, // Extended presets default to continue: true
+      maxTurns: options?.maxTurns ?? presetConfig.maxTurns
+    });
+  } else {
+    // Handle base preset
+    const basePreset = preset as keyof typeof DEFAULT_PRESETS;
+
+    const clientOptions: any = {
+      pathToClaudeCodeExecutable: options?.pathToClaudeCodeExecutable
+    };
+
+    // Only add systemPrompt if explicitly provided
+    if (options?.systemPrompt !== undefined) {
+      clientOptions.systemPrompt = options.systemPrompt;
+    }
+
+    const client = createClientWithPreset(basePreset, clientOptions);
+
+    return new AutoContinueSessionManager(client, {
+      continue: options?.continue ?? false, // Base presets default to continue: false
+      maxTurns: options?.maxTurns ?? DEFAULT_PRESETS[basePreset].maxTurns
+    });
+  }
 }
 
-/**
- * Create a SessionManager with auto-continue support using custom options
- */
-export function createAutoContinueManagerWithOptions(
-  preset: keyof typeof DEFAULT_PRESETS,
-  options: { continue: boolean; maxTurns?: number }
-): AutoContinueSessionManager {
-  const client = createClientWithPreset(preset);
-
-  return new AutoContinueSessionManager(client, {
-    continue: options.continue,
-    maxTurns: options.maxTurns ?? DEFAULT_PRESETS[preset].maxTurns
-  });
-}
