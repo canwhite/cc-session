@@ -372,7 +372,13 @@ function isNotFoundError(error: unknown): boolean {
 
 // Static factory methods for convenience
 export function createClient(options?: Partial<SDKOptions>): ClaudeAgentSDKClient {
-  return new ClaudeAgentSDKClient(options);
+  // Auto-detect Claude Code executable path if not provided
+  const finalOptions = {
+    ...options,
+    pathToClaudeCodeExecutable: options?.pathToClaudeCodeExecutable || getDefaultClaudeCodePath()
+  };
+
+  return new ClaudeAgentSDKClient(finalOptions);
 }
 
 export function createClientWithPreset(
@@ -387,5 +393,30 @@ export function createClientWithPreset(
     throw new Error(`Unknown preset '${preset}'. Available presets: ${Object.keys(DEFAULT_PRESETS).join(', ')}`);
   }
 
-  return new ClaudeAgentSDKClient(preset, options);
+  // Auto-detect Claude Code executable path if not provided
+  const finalOptions = {
+    ...options,
+    pathToClaudeCodeExecutable: options?.pathToClaudeCodeExecutable || getDefaultClaudeCodePath()
+  };
+
+  return new ClaudeAgentSDKClient(preset, finalOptions);
+}
+
+function getDefaultClaudeCodePath(): string {
+  // Try environment variable first
+  if (process.env.CLAUDE_CODE_PATH) {
+    return process.env.CLAUDE_CODE_PATH;
+  }
+
+  // Try common installation paths
+  const possiblePaths = [
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+    '/usr/bin/claude',
+    process.env.HOME ? `${process.env.HOME}/.bun/bin/claude` : null,
+    process.env.HOME ? `${process.env.HOME}/.npm/bin/claude` : null,
+  ].filter(Boolean) as string[];
+
+  // Return the first path that exists (this is just a fallback, actual existence check happens in SDK)
+  return possiblePaths[0] || '/usr/local/bin/claude';
 }

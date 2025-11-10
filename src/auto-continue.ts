@@ -182,13 +182,15 @@ export class AutoContinueSessionManager extends SessionManager {
  */
 export function createAutoContinueManager(
   preset: keyof typeof EXTENDED_PRESETS,
-  options?: { maxTurns?: number }
+  options?: { maxTurns?: number; pathToClaudeCodeExecutable?: string }
 ): AutoContinueSessionManager {
   const presetConfig = EXTENDED_PRESETS[preset];
 
   // Create client with the preset (extract base preset without _continue suffix)
   const basePreset = preset.replace('_continue', '') as keyof typeof DEFAULT_PRESETS;
-  const client = createClientWithPreset(basePreset);
+  const client = createClientWithPreset(basePreset, {
+    pathToClaudeCodeExecutable: options?.pathToClaudeCodeExecutable
+  });
 
   // Create auto-continue manager
   return new AutoContinueSessionManager(client, {
