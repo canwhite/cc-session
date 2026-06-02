@@ -142,7 +142,7 @@ export class AutoContinueSessionManager extends SessionManager {
     autoContinueSession.summary = session.summary;
     autoContinueSession.todos = session.todos;
     autoContinueSession.tools = session.tools;
-    (autoContinueSession as any).setUsageDataForTransfer(session.usageData);
+    autoContinueSession.setUsageDataForTransfer(session.usageData);
     autoContinueSession.isExplicit = session.isExplicit;
     autoContinueSession.permissionMode = session.permissionMode;
 

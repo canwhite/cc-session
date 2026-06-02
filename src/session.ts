@@ -132,11 +132,11 @@ export class Session {
   }
 
   setMessages(messages: SDKMessage[]): void {
-    // _index.setMessages calls processCallback for each message to sync derived state
-    const { diff, lastTimestamp } = this._index.setMessages(
-      messages,
-      (msg) => this.processMessage(msg)
-    );
+    // Derive state (todos, tools, usage) from each message before indexing
+    for (const message of messages) {
+      this.processMessage(message);
+    }
+    const { diff, lastTimestamp } = this._index.setMessages(messages);
 
     // Extract summary from first user prompt if not already set
     if (!this.summary) {
@@ -181,7 +181,7 @@ export class Session {
    * Protected setter for use by AutoContinueSession.createSession()
    * to transfer usage data without triggering a broadcast.
    */
-  protected setUsageDataForTransfer(value: UsageSummary): void {
+  public setUsageDataForTransfer(value: UsageSummary): void {
     this._usageData = value;
   }
 

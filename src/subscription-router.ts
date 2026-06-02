@@ -1,6 +1,11 @@
 import { nanoid } from "nanoid";
 import type { BroadcastMessage, SessionSubscriberCallback } from "./types";
 
+/** Narrow type for the Session reference passed to noticeSubscribers — only the fields used in broadcast messages */
+interface SessionRef {
+  readonly claudeSessionId: string | null;
+}
+
 /**
  * Owns the subscriber registry and event emission for a Session.
  * Extracted to enable isolated testing of the broadcast seam.
@@ -28,9 +33,9 @@ export class SubscriptionRouter {
     };
   }
 
-  noticeSubscribers(session: unknown, message: BroadcastMessage): void {
+  noticeSubscribers(session: SessionRef, message: BroadcastMessage): void {
     for (const callback of this.subscribers.values()) {
-      callback(session as any, message);
+      callback(session as unknown as SessionSubscriberCallback, message);
     }
   }
 }

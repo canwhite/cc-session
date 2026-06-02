@@ -34,19 +34,13 @@ export class MessageIndex {
 
   /**
    * Replace the entire message set (used by loadFromServer).
-   * The processCallback is called for each message to allow the owner (Session)
-   * to sync derived state (todos, tools, usage) — extracted to keep this module pure.
-   * Returns the diff between old and new state and the last message timestamp.
+   * Returns the diff and the rendered messages so the caller can drive state derivation.
    */
   setMessages(
-    messages: SDKMessage[],
-    processCallback?: (message: SDKMessage) => void
+    messages: SDKMessage[]
   ): { diff: MessageDiff; lastTimestamp: number | null } {
     const rendered: ChatMessage[] = [];
     for (const message of messages) {
-      if (processCallback) {
-        processCallback(message);
-      }
       appendRenderableMessage(rendered, message);
     }
     const nextMessages = coalesceReadMessages(rendered);
