@@ -10,34 +10,31 @@ import {
   UsageSummary,
   IClaudeAgentSDKClient,
   AttachmentPayload,
-  ToolResultContentBlock,
 } from "./types";
 
-import {
-  appendRenderableMessage,
-  AppendRenderableMessageResult,
-  buildUserMessageContent,
-  ChatMessage,
-  coalesceReadMessages,
-  extractTimestamp,
-} from "./chat-message";
+import { buildUserMessageContent, ChatMessage } from "./chat-message";
 import { ClaudeAgentSDKClient } from "./cas-client";
+import { MessageIndex } from "./message-index";
+import { SubscriptionRouter } from "./subscription-router";
 
 import {
   type BroadcastMessage,
   type SessionSubscriberCallback,
+  type MessageSnapshot,
 } from "./types";
 
 // Session class to manage a single Claude conversation
 export class Session {
   public readonly _id: string;
-  public messages: ChatMessage[] = [];
-  private subscribers: Map<string, SessionSubscriberCallback> = new Map();
+  public readonly client: IClaudeAgentSDKClient;
+
+  private _index: MessageIndex;
+  private _router: SubscriptionRouter;
+
   private queryPromise: Promise<{ success: boolean; lastAssistantMessage?: any; usage?: any }> | null = null;
   private loadingPromise: Promise<void> | null = null;
   private cancellationToken: { cancelled: boolean } | null = null;
-  private messageCount = 0;
-  private client: IClaudeAgentSDKClient;
+
   public claudeSessionId: string | null = null;
   public error: string | undefined;
   public busy = false;
@@ -48,7 +45,7 @@ export class Session {
   public currentMainLoopModel: string | undefined;
   public todos: TodoItem[] = [];
   public tools: string[] = [];
-  private _usageData: UsageSummary = {
+  protected _usageData: UsageSummary = {
     totalTokens: 0,
     totalCost: 0,
     contextWindow: 0,
@@ -58,25 +55,38 @@ export class Session {
   private pendingToolsBroadcast = false;
 
   constructor(client: IClaudeAgentSDKClient = new ClaudeAgentSDKClient()) {
-    if (!client || typeof client !== 'object') {
-      throw new Error('Session requires a valid client instance');
+    if (!client || typeof client !== "object") {
+      throw new Error("Session requires a valid client instance");
     }
 
-    // Validate that the client has the required methods
-    const requiredMethods: (keyof IClaudeAgentSDKClient)[] = ['queryStream', 'getSession'];
+    const requiredMethods: (keyof IClaudeAgentSDKClient)[] = [
+      "queryStream",
+      "getSession",
+    ];
     for (const method of requiredMethods) {
-      if (typeof client[method] !== 'function') {
+      if (typeof client[method] !== "function") {
         throw new Error(`Client must implement ${method} method`);
       }
     }
 
     this._id = nanoid();
     this.client = client;
+    this._index = new MessageIndex();
+    this._router = new SubscriptionRouter();
+  }
+
+  // Delegated to MessageIndex
+  get messages(): ChatMessage[] {
+    return this._index.messages;
+  }
+
+  get messageCount(): number {
+    return this._index.messageCount;
   }
 
   // Check if session has any subscribers
   hasSubscribers(): boolean {
-    return this.subscribers.size > 0;
+    return this._router.hasSubscribers();
   }
 
   // Cancel any ongoing operations
@@ -90,74 +100,67 @@ export class Session {
     this.error = "Operation cancelled by user";
     this.emitSessionInfo();
   }
-  
+
   // Subscribe to session updates
   subscribe(callback: SessionSubscriberCallback): () => void {
-    if (!callback || typeof callback !== 'function') {
-      throw new Error('Subscription callback must be a function');
+    if (!callback || typeof callback !== "function") {
+      throw new Error("Subscription callback must be a function");
     }
 
-    const id = nanoid(); // Generate unique ID for this subscription
-    this.subscribers.set(id, callback);
-
-    // Send session info to new subscriber
+    // Send session info to new subscriber immediately
     try {
-      callback(
-        this,
-        {
-          type: 'session_info',
-          sessionId: this.claudeSessionId,
-          messageCount: this.messageCount,
-          isActive: this.queryPromise !== null
-        }
-      );
+      callback(this as any, {
+        type: "session_info",
+        sessionId: this.claudeSessionId,
+        messageCount: this.messageCount,
+        isActive: this.queryPromise !== null,
+      });
     } catch (error) {
-      // If callback throws during initial notification, remove the subscription
-      this.subscribers.delete(id);
-      throw new Error(`Subscription callback failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Subscription callback failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
 
-    // Return unsubscribe function
-    return () => {
-      this.subscribers.delete(id);
-    };
+    // Delegate to router
+    return this._router.subscribe(callback);
   }
 
-  noticeSubscribers(message: BroadcastMessage) {
-    for (const callback of this.subscribers.values()) {
-      callback(this, message);
-    }
+  noticeSubscribers(message: BroadcastMessage): void {
+    this._router.noticeSubscribers(this, message);
   }
 
   setMessages(messages: SDKMessage[]): void {
-    const rendered: ChatMessage[] = [];
-    // Process each historical SDK message before rendering.
-    for (const message of messages) {
-      // Keep session state in sync (todos, usage, etc.).
-      this.processMessage(message);
-      // Build renderable messages and connect tool_use/tool_result pairs.
-      appendRenderableMessage(rendered, message);
-    }
+    // _index.setMessages calls processCallback for each message to sync derived state
+    const { diff, lastTimestamp } = this._index.setMessages(
+      messages,
+      (msg) => this.processMessage(msg)
+    );
 
-    // Merge consecutive Read tool invocations to keep the UI tidy.
-    this.messages = coalesceReadMessages(rendered);
-    this.messageCount = this.messages.length;
-    this.emitMessagesLoaded();
-    this.emitSessionInfo();
-
+    // Extract summary from first user prompt if not already set
     if (!this.summary) {
+      const rendered = this._index.messages;
       const summaryText = extractSummaryFromMessages(rendered);
       if (summaryText) {
         this.summary = summaryText;
       }
     }
 
-    const lastTimestamp = extractLastMessageTimestamp(messages);
     if (lastTimestamp !== null) {
       this.lastModifiedTime = lastTimestamp;
     } else {
       this.lastModifiedTime = Date.now();
     }
+
+    // Broadcast messages_loaded with the full snapshot
+    this.noticeSubscribers({
+      type: "messages_loaded",
+      sessionId: this.claudeSessionId,
+      messages: this.messages.map(toSnapshot),
+    });
+
+    this.emitSessionInfo();
   }
 
   get usageData(): UsageSummary {
@@ -172,6 +175,14 @@ export class Session {
       sessionId: this.claudeSessionId,
       usage: this.usageData,
     });
+  }
+
+  /**
+   * Protected setter for use by AutoContinueSession.createSession()
+   * to transfer usage data without triggering a broadcast.
+   */
+  protected setUsageDataForTransfer(value: UsageSummary): void {
+    this._usageData = value;
   }
 
   loadFromServer(sessionId?: string): Promise<void> | undefined {
@@ -192,8 +203,8 @@ export class Session {
       try {
         const { messages } = await this.client.getSession(targetSessionId);
         if (messages.length === 0) {
-          this.messages = [];
-          this.messageCount = 0;
+          // Reset all state
+          this._index = new MessageIndex();
           this.summary = undefined;
           this.lastModifiedTime = Date.now();
           this.updateTodosState([]);
@@ -205,7 +216,11 @@ export class Session {
           };
           this.busy = false;
           this.isExplicit = false;
-          this.emitMessagesLoaded();
+          this.noticeSubscribers({
+            type: "messages_loaded",
+            sessionId: this.claudeSessionId,
+            messages: [],
+          });
           this.emitSessionInfo();
           return;
         }
@@ -222,7 +237,10 @@ export class Session {
         this.busy = false;
         this.isExplicit = false;
       } catch (error) {
-        console.error(`Failed to load session '${targetSessionId}':`, error);
+        console.error(
+          `Failed to load session '${targetSessionId}':`,
+          error
+        );
         this.error = error instanceof Error ? error.message : String(error);
       } finally {
         this.isLoading = false;
@@ -245,13 +263,17 @@ export class Session {
   async send(
     prompt: string,
     attachments: AttachmentPayload[] | undefined
-  ): Promise<{ success: boolean; error?: string; messageCount?: number; lastAssistantMessage?: any; usage?: any }> {
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    messageCount?: number;
+    lastAssistantMessage?: any;
+    usage?: any;
+  }> {
     if (this.queryPromise) {
-      // Queue is busy, wait for it
       await this.queryPromise;
     }
 
-    // Build the synthetic user message that will kick off the stream.
     const userMessage: SDKUserMessage = {
       type: "user",
       uuid: randomUUID(),
@@ -272,40 +294,31 @@ export class Session {
       `Processing message ${pendingIndex} in session ${this.claudeSessionId}...`
     );
 
-    const previousMessages = this.messages;
-    const workingMessages = [...previousMessages];
-    const appendResult = appendRenderableMessage(workingMessages, userMessage);
-    const coalescedMessages = coalesceReadMessages(workingMessages);
-    this.applyMessageUpdates(previousMessages, coalescedMessages, appendResult);
+    // Apply user message to index before streaming
+    const { diff: userDiff } = this._index.applyIncomingMessage(userMessage);
+    this.broadcastMessageDiff(userDiff);
 
-    // Seed the session summary with the user's first prompt if needed.
     if (!this.summary) {
       this.summary = prompt;
     }
 
-    // Update session metadata flags before handing control to the stream.
     this.isExplicit = false;
     this.lastModifiedTime = Date.now();
     this.busy = true;
-    this.error = undefined; // Clear previous errors
-
-    // Create cancellation token for this operation
+    this.error = undefined;
     this.cancellationToken = { cancelled: false };
 
     this.queryPromise = (async () => {
       try {
-        // Use resume for multi-turn, continue for first message
         const baseOptions = this.claudeSessionId
           ? { resume: this.claudeSessionId }
           : {};
 
-        // Get client default options including systemPrompt
         const clientDefaults = this.client.getDefaultOptions();
 
-        // Merge options: systemPrompt from client defaults + resume/session options
         const queryOptions = {
           ...clientDefaults,
-          ...baseOptions
+          ...baseOptions,
         };
 
         console.log("Starting query stream...");
@@ -313,41 +326,44 @@ export class Session {
           generateMessages(),
           queryOptions
         )) {
-          // Check if operation was cancelled
           if (this.cancellationToken?.cancelled) {
             console.log("Query stream cancelled");
             break;
           }
           console.log("Processing stream message:", message.type);
 
-          // Process the message and check if it's a final result
           this.processIncomingMessage(message);
 
-          // Check if this is the final result message
           if (message.type === "result") {
             console.log("Final result received");
           }
         }
         console.log("Query stream completed");
 
-        // Return the final result
-        const assistantMessages = this.messages.filter(msg => msg.type === 'assistant');
-        const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null;
+        const assistantMessages = this.messages.filter(
+          (msg) => msg.type === "assistant"
+        );
+        const lastAssistantMessage =
+          assistantMessages.length > 0
+            ? assistantMessages[assistantMessages.length - 1]
+            : null;
 
         return {
           success: true,
           lastAssistantMessage,
-          usage: this.usageData
+          usage: this.usageData,
         };
       } catch (error) {
-        console.error(`Error in session ${this.claudeSessionId}:`, error);
+        console.error(
+          `Error in session ${this.claudeSessionId}:`,
+          error
+        );
         this.error = error instanceof Error ? error.message : String(error);
-        // Re-throw the error so caller can handle it
         throw error;
       } finally {
         this.queryPromise = null;
         this.cancellationToken = null;
-        this.busy = false; // Ensure busy is always cleared
+        this.busy = false;
         this.emitSessionInfo();
       }
     })();
@@ -359,47 +375,41 @@ export class Session {
         success: true,
         messageCount: this.messageCount,
         lastAssistantMessage: queryResult?.lastAssistantMessage,
-        usage: queryResult?.usage
+        usage: queryResult?.usage,
       };
     } catch (error) {
-      const assistantMessages = this.messages.filter(msg => msg.type === 'assistant');
-      const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null;
+      const assistantMessages = this.messages.filter(
+        (msg) => msg.type === "assistant"
+      );
+      const lastAssistantMessage =
+        assistantMessages.length > 0
+          ? assistantMessages[assistantMessages.length - 1]
+          : null;
 
       return {
         success: false,
         error: this.error,
         lastAssistantMessage,
-        usage: this.usageData
+        usage: this.usageData,
       };
     }
   }
 
-  /**
-   * Handle an incoming SDK message from the streaming iterator.
-   *
-   * Steps:
-   * 1. Update session state (todos, usage, tools, permission mode).
-   * 2. Convert the SDK payload into renderable chat messages.
-   * 3. Coalesce consecutive Read tool invocations for cleaner UI output.
-   * 4. Broadcast message changes to subscribers.
-   * 5. Adjust the busy flag based on lifecycle signals.
-   */
   processIncomingMessage(message: SDKMessage): void {
     console.log("Received message:", message);
     this.processMessage(message);
-    const previousMessages = this.messages;
-    const workingMessages = [...previousMessages];
-    const appendResult = appendRenderableMessage(workingMessages, message);
-    const coalescedMessages = coalesceReadMessages(workingMessages);
-    this.applyMessageUpdates(previousMessages, coalescedMessages, appendResult);
 
-    const rawTimestamp = (message as { timestamp?: unknown }).timestamp;
-    const extracted = extractTimestamp(rawTimestamp);
-    this.lastModifiedTime = extracted ?? Date.now();
+    const { diff, toolResultUpdates, lastTimestamp } =
+      this._index.applyIncomingMessage(message);
+
+    if (lastTimestamp !== null) {
+      this.lastModifiedTime = lastTimestamp;
+    } else {
+      this.lastModifiedTime = Date.now();
+    }
 
     this.claudeSessionId = message.session_id || this.claudeSessionId;
 
-    // Update high level state derived from system/result messages.
     if (message.type === "system") {
       if (message.subtype === "init") {
         this.busy = true;
@@ -407,58 +417,56 @@ export class Session {
     } else if (message.type === "result") {
       this.busy = false;
     }
-  }
 
-  private applyMessageUpdates(
-    previousMessages: ChatMessage[],
-    nextMessages: ChatMessage[],
-    appendResult: AppendRenderableMessageResult
-  ): void {
-    this.messages = nextMessages;
-    this.messageCount = nextMessages.length;
+    // Broadcast all message changes
+    this.broadcastMessageDiff(diff);
 
-    const diff = diffMessages(previousMessages, nextMessages, appendResult.updatedMessages);
-    const nextMap = buildMessageMap(nextMessages);
-
-    for (const messageId of diff.removed) {
-      this.noticeSubscribers({
-        type: "message_removed",
-        sessionId: this.claudeSessionId,
-        messageId,
-      });
-    }
-
-    for (const added of diff.added) {
-      this.noticeSubscribers({
-        type: "message_added",
-        sessionId: this.claudeSessionId,
-        message: added,
-      });
-    }
-
-    for (const updated of diff.updated) {
-      this.noticeSubscribers({
-        type: "message_updated",
-        sessionId: this.claudeSessionId,
-        message: updated,
-      });
-    }
-
-    for (const toolUpdate of appendResult.toolResultUpdates) {
-      const message = nextMap.get(toolUpdate.message.id);
-      if (!message) {
-        continue;
-      }
+    // Broadcast tool result updates
+    const nextMap = this._index.getMessageMap();
+    for (const toolUpdate of toolResultUpdates) {
+      const msg = nextMap.get(toolUpdate.message.id);
+      if (!msg) continue;
       this.noticeSubscribers({
         type: "tool_result_updated",
         sessionId: this.claudeSessionId,
-        messageId: message.id,
+        messageId: msg.id,
         toolUseId: toolUpdate.toolUseId,
         result: toolUpdate.toolResult,
       });
     }
 
     this.emitSessionInfo();
+  }
+
+  /**
+   * Broadcast a message diff to all subscribers.
+   */
+  private broadcastMessageDiff(diff: {
+    added: ChatMessage[];
+    updated: ChatMessage[];
+    removed: string[];
+  }): void {
+    for (const id of diff.removed) {
+      this.noticeSubscribers({
+        type: "message_removed",
+        sessionId: this.claudeSessionId,
+        messageId: id,
+      });
+    }
+    for (const added of diff.added) {
+      this.noticeSubscribers({
+        type: "message_added",
+        sessionId: this.claudeSessionId,
+        message: toSnapshot(added),
+      });
+    }
+    for (const updated of diff.updated) {
+      this.noticeSubscribers({
+        type: "message_updated",
+        sessionId: this.claudeSessionId,
+        message: toSnapshot(updated),
+      });
+    }
   }
 
   private emitSessionInfo(): void {
@@ -470,17 +478,6 @@ export class Session {
     });
   }
 
-  private emitMessagesLoaded(): void {
-    this.noticeSubscribers({
-      type: "messages_loaded",
-      sessionId: this.claudeSessionId,
-      messages: this.messages,
-    });
-  }
-
-  /**
-   * Handle the terminal result message and update cost/context metrics.
-   */
   private handleResultMessage(message: SDKResultMessage): void {
     const usage = this.usageData;
     const modelName = this.currentMainLoopModel;
@@ -495,14 +492,6 @@ export class Session {
     };
   }
 
-  /**
-   * Update session state derived from a raw SDK message.
-   *
-   * Key signals extracted per message type:
-   * - assistant: todos, usage metadata, and tool state.
-   * - system(init): model selection, tool list, and permission mode.
-   * - result: aggregate cost and context window information.
-   */
   private processMessage(message: SDKMessage): void {
     if (message.type === "assistant") {
       this.handleAssistantMessage(message);
@@ -524,17 +513,9 @@ export class Session {
     }
   }
 
-  /**
-   * Handle assistant messages and extract actionable metadata.
-   *
-   * Specifically:
-   * 1. TodoWrite tool invocations -> keep the todo list in sync.
-   * 2. Usage summaries -> roll up token accounting.
-   */
   private handleAssistantMessage(message: SDKAssistantMessage): void {
     if (message.message && Array.isArray(message.message.content)) {
       for (const block of message.message.content) {
-        // Extract TodoWrite tool invocations to mirror Claude's todo list.
         if (
           block.type === "tool_use" &&
           block.name === "TodoWrite" &&
@@ -550,7 +531,6 @@ export class Session {
       }
     }
 
-    // Update usage tracking when the assistant reports fresh metrics.
     if (message.message.usage) {
       this.updateUsage(message.message.usage);
     }
@@ -616,9 +596,6 @@ export class Session {
     });
   }
 
-  /**
-   * Recompute the usage aggregate by summing input, cache, and output tokens.
-   */
   private updateUsage(usage: {
     input_tokens: number;
     output_tokens: number;
@@ -641,70 +618,14 @@ export class Session {
   }
 }
 
-interface MessageDiff {
-  added: ChatMessage[];
-  updated: ChatMessage[];
-  removed: string[];
-}
-
-function diffMessages(
-  previous: ChatMessage[],
-  next: ChatMessage[],
-  explicitlyUpdated: ChatMessage[] = []
-): MessageDiff {
-  const previousMap = buildMessageMap(previous);
-  const nextMap = buildMessageMap(next);
-
-  const added: ChatMessage[] = [];
-  const removed: string[] = [];
-  const updatedMap = new Map<string, ChatMessage>();
-  const explicitIds = new Set(explicitlyUpdated.map((message) => message.id));
-
-  for (const [id, message] of nextMap) {
-    if (!previousMap.has(id)) {
-      added.push(message);
-    }
-  }
-
-  for (const [id] of previousMap) {
-    if (!nextMap.has(id)) {
-      removed.push(id);
-    }
-  }
-
-  for (const [id, message] of nextMap) {
-    if (explicitIds.has(id)) {
-      updatedMap.set(id, message);
-      continue;
-    }
-    const previousMessage = previousMap.get(id);
-    if (previousMessage && previousMessage !== message) {
-      updatedMap.set(id, message);
-    }
-  }
-
-  return {
-    added,
-    updated: Array.from(updatedMap.values()),
-    removed,
-  };
-}
-
-function buildMessageMap(messages: ChatMessage[]): Map<string, ChatMessage> {
-  const map = new Map<string, ChatMessage>();
-  for (const message of messages) {
-    if (!map.has(message.id)) {
-      map.set(message.id, message);
-    }
-  }
-  return map;
-}
+// ---------------------------------------------------------------------------
+// Private helpers (previously at bottom of session.ts, now kept here)
+// ---------------------------------------------------------------------------
 
 function areTodosEqual(left: TodoItem[], right: TodoItem[]): boolean {
   if (left.length !== right.length) {
     return false;
   }
-
   for (let index = 0; index < left.length; index += 1) {
     const a = left[index];
     const b = right[index];
@@ -712,7 +633,6 @@ function areTodosEqual(left: TodoItem[], right: TodoItem[]): boolean {
       return false;
     }
   }
-
   return true;
 }
 
@@ -720,13 +640,11 @@ function areStringArraysEqual(left: string[], right: string[]): boolean {
   if (left.length !== right.length) {
     return false;
   }
-
   for (let index = 0; index < left.length; index += 1) {
     if (left[index] !== right[index]) {
       return false;
     }
   }
-
   return true;
 }
 
@@ -737,31 +655,26 @@ function extractSummaryFromMessages(
     if (message.type !== "user") {
       continue;
     }
-
     for (const part of message.content) {
       const content = part.content;
-      if (content.type === "text" && content.text.trim().length > 0) {
+      if (
+        content.type === "text" &&
+        typeof content.text === "string" &&
+        content.text.trim().length > 0
+      ) {
         return content.text.trim();
       }
     }
   }
-
   return undefined;
 }
 
-function extractLastMessageTimestamp(messages: SDKMessage[]): number | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const candidate = messages[index];
-    if (!candidate) {
-      continue;
-    }
-
-    const timestamp = (candidate as { timestamp?: unknown }).timestamp;
-    const extracted = extractTimestamp(timestamp);
-    if (extracted !== null) {
-      return extracted;
-    }
-  }
-  return null;
+/** Convert a ChatMessage to a MessageSnapshot for broadcast payloads */
+function toSnapshot(msg: ChatMessage): MessageSnapshot {
+  return {
+    id: msg.id,
+    type: msg.type,
+    timestamp: msg.timestamp,
+    content: msg.content.map((part) => part.toJSON()),
+  };
 }
-

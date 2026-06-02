@@ -6,6 +6,14 @@ import type {
   Options as SDKOptions,
 } from "@anthropic-ai/claude-agent-sdk";
 
+/** Minimal snapshot of a ChatMessage for broadcast payloads — avoids circular dep with chat-message.ts */
+export interface MessageSnapshot {
+  id: string;
+  type: string;
+  timestamp: number;
+  content: unknown[];
+}
+
 export type {
   SDKUserMessage,
   SDKMessage,
@@ -157,12 +165,12 @@ export interface ToolsUpdateBroadcastMessage extends BaseBroadcastMessage {
 
 export interface MessageAddedBroadcastMessage extends BaseBroadcastMessage {
   type: "message_added";
-  message: any;
+  message: MessageSnapshot;
 }
 
 export interface MessageUpdatedBroadcastMessage extends BaseBroadcastMessage {
   type: "message_updated";
-  message: any;
+  message: MessageSnapshot;
 }
 
 export interface MessageRemovedBroadcastMessage extends BaseBroadcastMessage {
@@ -172,7 +180,7 @@ export interface MessageRemovedBroadcastMessage extends BaseBroadcastMessage {
 
 export interface MessagesLoadedBroadcastMessage extends BaseBroadcastMessage {
   type: "messages_loaded";
-  messages: any[];
+  messages: MessageSnapshot[];
 }
 
 export interface ToolResultUpdatedBroadcastMessage

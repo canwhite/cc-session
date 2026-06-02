@@ -12,6 +12,50 @@ A powerful TypeScript library for session management and packaging utilities for
 - 🚀 **Bun Optimized**: Built with Bun for optimal performance
 - 📦 **TypeScript Support**: Full type safety and IntelliSense support
 
+## Architecture
+
+The library is structured around three core modules extracted from the original monolithic `Session` class:
+
+### Core Modules
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| `Session` | `src/session.ts` | Coordinator — holds `MessageIndex` and `SubscriptionRouter`, orchestrates streaming, state derivation, cancellation |
+| `MessageIndex` | `src/message-index.ts` | Owns the message array, diff computation, and `ChatMessage` lifecycle |
+| `SubscriptionRouter` | `src/subscription-router.ts` | Owns subscriber registry and event emission |
+| `ClaudeAgentSDKClient` | `src/cas-client.ts` | SDK adapter — wraps `@anthropic-ai/claude-agent-sdk` |
+| `SessionManager` | `src/session-manager.ts` | Factory and lifecycle manager for `Session` instances |
+| `AutoContinueSession` | `src/auto-continue.ts` | Session decorator that auto-creates a new session when approaching `maxTurns` |
+| `transferSessionContext` | `src/session-context-transfer.ts` | Pure function for transferring session state between sessions on continuation |
+
+### Data Flow
+
+```
+session.send(prompt)
+    ├─► buildUserMessageContent()       [message-parsing.ts]
+    └─► client.queryStream()
+            ├─► MessageIndex.applyIncomingMessage()  — diff + broadcast
+            ├─► SubscriptionRouter.noticeSubscribers()  — emit to all callbacks
+            └─► Session.processMessage()  — derive todos/tools/usage
+```
+
+### Subscription System
+
+The subscription model is **push-based**. Subscribe to a `Session` and receive all state transitions:
+
+```typescript
+const unsub = session.subscribe((session, message) => {
+  switch (message.type) {
+    case "message_added":   console.log("added:", message.message); break;
+    case "todos_updated":   console.log("todos:", message.todos); break;
+    case "usage_updated":   console.log("usage:", message.usage); break;
+  }
+});
+// later: unsub() // unsubscribe
+```
+
+Available broadcast types: `session_info`, `messages_loaded`, `usage_updated`, `todos_updated`, `tools_updated`, `message_added`, `message_updated`, `message_removed`, `tool_result_updated`.
+
 ## Quick Start
 
 ### Prerequisites
@@ -139,8 +183,8 @@ const session = new Session(client: ClaudeAgentSDKClient);
 
 - `send(message: string, attachments?: AttachmentPayload[]): Promise<SendResult>` - Send a message to Claude and get the final result
 - `cancel(): void` - Cancel the current operation
-- `subscribe(callback: SubscriptionCallback): () => void` - Subscribe to session updates
-- `unsubscribe(): void` - Unsubscribe from updates
+- `subscribe(callback: SubscriptionCallback): () => void` - Subscribe to session updates; returns an unsubscribe function
+- `loadFromServer(sessionId?: string): Promise<void>` - Reload session state from disk
 
 #### SendResult
 
@@ -224,6 +268,29 @@ The **Question Preset** is specifically designed for scenarios where you want to
 - Get information and explanations
 - Search through files and directories
 - Perform read-only operations
+
+### Auto-Continue
+
+For long-running conversations that may hit the `maxTurns` limit, use `createAutoContinueManager`:
+
+```typescript
+import { createAutoContinueManager } from "@iamqc/cc-session";
+
+// When the session approaches maxTurns, it automatically:
+// 1. Creates a new session
+// 2. Transfers todos, tools, and summary
+// 3. Continues the conversation in the new session
+const manager = createAutoContinueManager("production_continue", {
+  maxTurns: 100,
+  systemPrompt: "You are a helpful assistant..."
+});
+
+const session = manager.createSession();
+const result = await session.send("Start a long task...");
+// If continued mid-stream, result.continued === true and result.newSession is the continuation session
+```
+
+Extended presets (with `_continue` suffix) enable auto-continue by default. Base presets accept a `continue: true` option.
 
 ## Development
 
@@ -326,19 +393,16 @@ await session.send("Explain the architecture of this codebase");
 
 ## Testing
 
-The library includes comprehensive tests that cover:
-
-- Session creation and management
-- Message streaming and real-time updates
-- Tool integration and result handling
-- Error propagation and cancellation
-- Client preset configurations
-
-Run the test suite:
+Tests are located in `test-session/`:
 
 ```bash
-bun run test
+bun run test              # test-final-result.ts
+bun run test-session/demo-session.ts    # demo
+bun run test-session/demo-question.ts   # question preset demo
+bun run test-session/test-auto-continue.ts  # auto-continue demo
 ```
+
+Tests require a Claude Code binary. If not present, the SDK will throw a `ReferenceError` pointing to the missing executable path.
 
 ## License
 

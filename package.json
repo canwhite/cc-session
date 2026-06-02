@@ -15,7 +15,7 @@
     "build": "bun build src/index.ts --outdir=dist --target=node --splitting --format=esm && bun link && bunx tsc --emitDeclarationOnly --outDir dist",
     "dev": "bun build --watch src/index.ts --outdir=dist --target=node --splitting --format=esm",
     "start": "bun run dist/index.js",
-    "test": "bun run test-session/demo-session.ts",
+    "test": "bun run test-session/test-final-result.ts",
     "clean": "rm -rf dist",
     "prepublishOnly": "bun run build",
     "publish:beta": "npm publish --access public --tag beta",

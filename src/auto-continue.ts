@@ -2,6 +2,7 @@ import { SessionManager } from "./session-manager";
 import { Session } from "./session";
 import { IClaudeAgentSDKClient, AttachmentPayload } from "./types";
 import { createClientWithPreset, DEFAULT_PRESETS } from "./cas-client";
+import { transferSessionContext } from "./session-context-transfer";
 
 /**
  * Extended preset configuration with continue support
@@ -89,7 +90,7 @@ export class AutoContinueSession extends Session {
     const newSession = this.sessionManager.createSession();
 
     // Transfer context from old session to new session
-    await this.transferSessionContext(this, newSession);
+    transferSessionContext(this, newSession);
 
     // Send the message in the new session
     const result = await newSession.send(prompt, attachments);
@@ -99,34 +100,6 @@ export class AutoContinueSession extends Session {
       continued: true,
       newSession
     };
-  }
-
-  /**
-   * Transfer context from old session to new session
-   */
-  private async transferSessionContext(oldSession: Session, newSession: Session): Promise<void> {
-    // Transfer summary
-    if (oldSession.summary) {
-      newSession.summary = oldSession.summary;
-    }
-
-    // Transfer todos
-    if (oldSession.todos.length > 0) {
-      console.log(`Transferring ${oldSession.todos.length} todos to new session`);
-      newSession.todos = [...oldSession.todos];
-    }
-
-    // Transfer tools
-    if (oldSession.tools.length > 0) {
-      console.log(`Transferring ${oldSession.tools.length} tools to new session`);
-      newSession.tools = [...oldSession.tools];
-    }
-
-    // Transfer usage data
-    const oldUsage = oldSession.usageData;
-    console.log(`Previous session usage: ${oldUsage.totalTokens} tokens, $${oldUsage.totalCost.toFixed(6)} cost`);
-
-    console.log(`Session context transferred from ${oldSession.claudeSessionId} to ${newSession.claudeSessionId}`);
   }
 }
 
@@ -156,16 +129,22 @@ export class AutoContinueSessionManager extends SessionManager {
    */
   createSession(): AutoContinueSession {
     // Use the parent's createSession method to handle session management
-    const session = super.createSession() as any;
+    const session = super.createSession() as Session;
 
     // Convert the session to AutoContinueSession
     const autoContinueSession = new AutoContinueSession(session.client, this, {
       continue: this.continueEnabled,
-      maxTurns: this.maxTurns
+      maxTurns: this.maxTurns,
     });
 
-    // Copy all properties from the original session
-    Object.assign(autoContinueSession, session);
+    // Explicit field transfer — contract is visible, no Object.assign magic
+    autoContinueSession.claudeSessionId = session.claudeSessionId;
+    autoContinueSession.summary = session.summary;
+    autoContinueSession.todos = session.todos;
+    autoContinueSession.tools = session.tools;
+    (autoContinueSession as any).setUsageDataForTransfer(session.usageData);
+    autoContinueSession.isExplicit = session.isExplicit;
+    autoContinueSession.permissionMode = session.permissionMode;
 
     // Replace the session in the list
     const index = this.sessions.indexOf(session);
