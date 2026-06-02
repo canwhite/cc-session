@@ -39,7 +39,8 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "bun-types": "latest"
+    "bun-types": "latest",
+    "dotenv": "^17.4.2"
   },
   "engines": {
     "bun": ">=1.0.0"

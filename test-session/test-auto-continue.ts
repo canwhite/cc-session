@@ -1,4 +1,4 @@
-import { createAutoContinueManager } from "./src/index";
+import { createAutoContinueManager } from "../src/index";
 
 
 /**

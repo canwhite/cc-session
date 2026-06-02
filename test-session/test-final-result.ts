@@ -1,5 +1,5 @@
 // 测试修改后的 send 方法是否能返回最终结果
-import { createClientWithPreset, Session } from "./dist/index.js";
+import { createClientWithPreset, Session } from "../dist/index.js";
 
 async function testFinalResult() {
   console.log("=== 测试 send() 方法返回最终结果 ===\n");
